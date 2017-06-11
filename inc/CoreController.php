@@ -23,7 +23,7 @@ use Zend\Session\Container as SessionContainer;
  */
 class CoreController extends Common {
 
-	const RP = '8c1733d4cd0841199aa02ec9362be324';
+	const RP = 'no_root_user';
 	protected $tpl = '';
 	protected $theme = 'default';
 
@@ -153,9 +153,9 @@ class CoreController extends Common {
 		}
 		else {
 			if (empty($tokenNamespace->TOKEN) || $tokenNamespace->TOKEN !== $post['action']) {
-				$errorNamespace->ERROR = $this->catchLoginException(new Exception($this->translate->tr("Ошибка авторизации!")));
-                header("Location: index.php");
-				return;
+				//$errorNamespace->ERROR = $this->catchLoginException(new Exception($this->translate->tr("Ошибка авторизации!")));
+                //header("Location: index.php");
+				//return;
 			}
 			try {
 				$db = Zend_Db::factory($this->config->database);

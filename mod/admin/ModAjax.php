@@ -505,7 +505,7 @@ class ModAjax extends ajaxFunc {
 				$who   = $data['control']['is_admin_sw'] == 'Y' ? 'администратор безопасности' : 'пользователь';
                 $this->modAdmin->createEmail()
                     ->from("noreply@" . $_SERVER["SERVER_NAME"])
-                    ->to("easter.by@gmail.com")
+                    ->to("admin@localhost")
                     ->subject("Зарегистрирован новый $who")
                     ->body("На портале {$_SERVER["SERVER_NAME"]} зарегистрирован новый $who<br>
                             Дата: " . date('Y-m-d') . "<br>
