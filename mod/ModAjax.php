@@ -235,12 +235,40 @@ class ModAjax extends ajaxFunc {
      * @return xajaxResponse
      */
     public function saveEnum($data) {
-    	//echo "<pre>";  print_r($data); die;
+
     	$this->error = array();
-		$fields = array('name' => 'req', 'is_active_sw' => 'req');
+		$fields      = array(
+			'name'         => 'req',
+			'is_active_sw' => 'req'
+		);
 		if ($this->ajaxValidate($data, $fields)) {
 			return $this->response;
 		}
+
+		try {
+			$refid = $this->getSessFormField($data['class_id'], 'refid');
+            if (empty($refid)) {
+                $is_duplicate_enum = $this->db->fetchOne("
+                    SELECT 1
+                    FROM core_enum
+                    WHERE global_id = ?
+                      AND id != ?
+                ", array(
+                    $data['control']['global_id'],
+                    $refid,
+                ));
+
+                if ($is_duplicate_enum) {
+                    throw new Exception($this->translate->tr('Указанный идентификатор справочника уже существует.'));
+                }
+			}
+
+		} catch (Exception $e) {
+			$this->error[] = $e->getMessage();
+			$this->displayError($data);
+			return $this->response;
+		}
+
 		$custom_fields = array();
 		if (isset($data['customField']) && is_array($data['customField'])) {
 			foreach($data['customField'] as $k => $v) {
@@ -257,7 +285,7 @@ class ModAjax extends ajaxFunc {
 		if ($custom_fields) $data['control']['custom_field'] = base64_encode(serialize($custom_fields));
 		else $data['control']['custom_field'] = new Zend_Db_Expr('NULL');
 
-		if (!$lastId = $this->saveData($data)) {
+		if ( ! $lastId = $this->saveData($data)) {
 			return $this->response;
 		}
 		$this->setSessFormField($data['class_id'], 'back', $this->getSessFormField($data['class_id'], 'back') . "&edit=$lastId");
@@ -273,14 +301,41 @@ class ModAjax extends ajaxFunc {
      */
     public function saveEnumValue(array $data) {
 
-    	$this->error = array();
-		$fields = array(
-			'is_active_sw' => 'req',
-			'is_default_sw' => 'req'
-		);
+        $this->error = array();
+        $fields      = array(
+            'name'          => 'req',
+            'is_active_sw'  => 'req',
+            'is_default_sw' => 'req'
+        );
 		if ($this->ajaxValidate($data, $fields)) {
 			return $this->response;
-		}		
+		}
+
+
+        try {
+            $refid = $this->getSessFormField($data['class_id'], 'refid');
+            $is_duplicate_enum_value = $this->db->fetchOne("
+                SELECT 1
+                FROM core_enum
+                WHERE parent_id = ?
+                  AND `name` = ?
+                  AND id != ?
+            ", array(
+                $data['control']['parent_id'],
+                $data['control']['name'],
+                $refid,
+            ));
+
+            if ($is_duplicate_enum_value) {
+                throw new Exception($this->translate->tr('Указанное значение уже существует в данном справочнике.'));
+            }
+
+        } catch (Exception $e) {
+            $this->error[] = $e->getMessage();
+            $this->displayError($data);
+            return $this->response;
+        }
+
 		$str = "";
 		$cu_fi = array();
 		if (!empty($data['custom_fields'])) {
@@ -296,7 +351,7 @@ class ModAjax extends ajaxFunc {
    			if (strpos($key, 'id_') === 0) {
    				unset($data['control'][$key]);
 				if (is_array($val)) $val = implode(',', $val);
-   				$str_val = ($val == "") ? ":::" : "::" . $val . ":::";
+   				$str_val = ($val === "") ? ":::" : "::" . $val . ":::";
    				$str .= $cu_fi[substr($key, 3)]['label'] . $str_val;
    			} 
    		}
@@ -704,19 +759,18 @@ class ModAjax extends ajaxFunc {
 
 
                 //проверяем все SQL и PHP файлы на ошибки
-                require_once('core2/mod/admin/installModule.php');
+                require_once('admin/InstallModule.php');
 
-                $inst                          = new InstallModule();
+                $inst                          = new \Core2\InstallModule();
                 $mInfo                         = array('install' => array());
                 $mInfo['install']['module_id'] = $xmlObj->install->module_id;
+                $mInfo['install']['module_group'] = !empty($xmlObj->install->module_group) ? $xmlObj->install->module_group : '';
                 $inst->setMInfo($mInfo);
                 $errors    = array();
                 $filesList = $inst->getFilesList($destinationFolder);
+
 				//для проверки ошибок в файлах пхп
-				$php_path = '';
-				if (empty($this->config->php) || empty($this->config->php->path)) {
-					$php_path = $this->config->php->path;
-				}
+				$php_path = $this->getPHPPath();
                 foreach ($filesList as $path) {
                     $fName = substr($path, strripos($path, '/') + 1);
                     //проверка файлов php
@@ -729,6 +783,7 @@ class ModAjax extends ajaxFunc {
                         }
                     }
                 }
+
                 //проверка наличия подключаемых файлов
                 if (!empty($xmlObj->install->sql)) {
                     $path = $destinationFolder . "/install/" . $xmlObj->install->sql;
@@ -780,22 +835,25 @@ class ModAjax extends ajaxFunc {
                     throw new Exception($this->translate->tr("Не удалось получить хэшь файлов модуля"));
                 }
 
-                $is_exist = $this->db->fetchOne(
-                    "SELECT id
-                       FROM core_available_modules
-                      WHERE module_id = ?
-                        AND version = ?",
-                    array($xmlObj->install->module_id, $xmlObj->install->version)
-                );
+                $SQL = "SELECT id
+                           FROM core_available_modules
+                          WHERE module_id = ?
+                            AND version = ?";
+                $vars = array($xmlObj->install->module_id, $xmlObj->install->version);
+                if (!empty($xmlObj->install->module_group)) {
+                    $SQL .= " AND module_group=?";
+                    $vars[] = $xmlObj->install->module_group;
+                } else {
+                    $SQL .= " AND module_group IS NULL";
+                }
+                $is_exist = $this->db->fetchOne($SQL, $vars);
                 if (!empty($is_exist)) {
                     $this->db->update(
                         'core_available_modules',
                         array(
                             'name' 	        => $xmlObj->install->module_name,
-                            'module_id' 	=> $xmlObj->install->module_id,
                             'data' 		    => $content,
                             'descr' 	    => $xmlObj->install->description,
-                            'version' 	    => $xmlObj->install->version,
                             'install_info'  => serialize($inst->xmlParse($xmlObj)),
                             'readme' 	    => !empty($readme) ? $readme : new Zend_Db_Expr('NULL'),
                             'lastuser' 	    => $this->auth->ID,
@@ -809,6 +867,7 @@ class ModAjax extends ajaxFunc {
                         array(
                             'name' 	        => $xmlObj->install->module_name,
                             'module_id' 	=> $xmlObj->install->module_id,
+                            'module_group' 	=> !empty($xmlObj->install->module_group) ? $xmlObj->install->module_group : new Zend_Db_Expr("NULL"),
                             'data' 		    => $content,
                             'descr' 	    => $xmlObj->install->description,
                             'version' 	    => $xmlObj->install->version,
@@ -841,9 +900,12 @@ class ModAjax extends ajaxFunc {
      */
     private function getPHPPath() {
 
-        $php_path = $this->moduleConfig->php_path;
+        $php_path = '';
+        if (!empty($this->config->php) || !empty($this->config->php->path)) {
+            $php_path = $this->config->php->path;
+        }
 
-        if (empty($php_path)) {
+        if (!$php_path) {
             $system_php_path = exec('which php');
             if ( ! empty($system_php_path)) {
                 $php_path = $system_php_path;

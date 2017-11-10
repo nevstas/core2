@@ -46,27 +46,24 @@ class CoreController extends Common {
      */
 	public function action_index() {
         if (!$this->auth->ADMIN) throw new Exception(911);
-        $alert = new Alert();
-
-
 
         $tab = new tabs('mod');
         $tab->beginContainer($this->translate->tr("События аудита"));
         try {
-            $changedMods = $this->checkModulesChanges($alert);
+            $changedMods = $this->checkModulesChanges();
             if (empty($changedMods)) {
-                $alert->info($this->translate->tr("Система работает в штатном режиме."));
+                Alert::session()->info($this->translate->tr("Система работает в штатном режиме."));
             } else {
-                $alert->danger($this->translate->tr("Обнаружены изменения в файлах модулей:"), implode(", ", $changedMods), true);
+				Alert::session()->danger(implode(", ", $changedMods), $this->translate->tr("Обнаружены изменения в файлах модулей:"));
             }
-            if (!$this->moduleConfig->database || $this->moduleConfig->database->admin->username) {
-                $alert->warning($this->translate->tr("Не задан администратор базы данных"), "Задайте параметр 'database.admin.username' в conf.ini модуля 'admin'", true);
+            if (!$this->moduleConfig->database || !$this->moduleConfig->database->admin || !$this->moduleConfig->database->admin->username) {
+				Alert::session()->warning("Задайте параметр 'database.admin.username' в conf.ini модуля 'admin'", $this->translate->tr("Не задан администратор базы данных"));
             }
         } catch (Exception $e) {
-            $alert->danger($this->translate->tr("Ошибка"), $e->getMessage());
+			Alert::session()->danger($this->translate->tr("Ошибка"), $e->getMessage());
         }
 
-        $alert->draw();
+        echo Alert::get();
         $tab->endContainer();
 	}
 
@@ -104,7 +101,7 @@ class CoreController extends Common {
 		    if ($errorNamespace->numberOfPageRequests > 5) {
 		    	
 		    	$blockNamespace->blocked = time();
-		    	$blockNamespace->setExpirationSeconds(10);
+		    	$blockNamespace->setExpirationSeconds(60);
 		    	
 		    	$errorNamespace->numberOfPageRequests = 1;
 		    }
@@ -123,8 +120,7 @@ class CoreController extends Common {
 		$blockNamespace = new Zend_Session_Namespace('Block');
 		$tokenNamespace = new Zend_Session_Namespace('Token');
 		if (!empty($post['js_disabled'])) {
-			$errorNamespace->ERROR = $this->translate->tr("Javascript выключен или ваш браузер его не поддерживает!");
-            header("HTTP/1.1 400 Bad Request");
+			$errorNamespace->ERROR = $this->catchLoginException(new Exception($this->translate->tr("Javascript выключен или ваш браузер его не поддерживает!"), 400));
             header("Location: index.php");
 			return;
 		}
@@ -134,28 +130,33 @@ class CoreController extends Common {
 		}
 		else {
 			if (empty($tokenNamespace->TOKEN) || $tokenNamespace->TOKEN !== $post['action']) {
-				$errorNamespace->ERROR = $this->translate->tr("Ошибка авторизации!");
-                header("HTTP/1.1 400 Bad Request");
+				$errorNamespace->ERROR = $this->catchLoginException(new Exception($this->translate->tr("Ошибка авторизации!")));
                 header("Location: index.php");
 				return;
 			}
 			try {
 				$db = Zend_Db::factory($this->config->database);
 				$db->getConnection();
-				//Zend_Db_Table::setDefaultAdapter($db);
 			} catch (Exception $e) {
 				$errorNamespace->ERROR = $this->catchLoginException($e);
-                header("HTTP/1.1 503 Service Unavailable");
                 header("Location: index.php");
 				return;
 			}
 			$authLDAP = false;
-			if ($post['login'] !== 'root') {
+            $login = trim($post['login']);
+            $passw = $post['password'];
+
+            if (!ctype_print($passw)) {
+                $errorNamespace->ERROR = $this->catchLoginException(new Exception($this->translate->tr("Ошибка пароля!")));
+                header("Location: index.php");
+                return;
+            }
+			if ($login !== 'root') {
 				//ldap
 				if (!empty($this->config->ldap->active) && $this->config->ldap->active) {
 					require_once 'core2/inc/classes/LdapAuth.php';
                     $ldapAuth = new LdapAuth();
-                    $ldapAuth->auth($post['login'], $post['password']);
+                    $ldapAuth->auth($login, $passw);
                     $ldapStatus = $ldapAuth->getStatus();
 					switch ($ldapStatus) {
 						case LdapAuth::ST_LDAP_AUTH_SUCCESS :
@@ -186,8 +187,7 @@ class CoreController extends Common {
 //							$this->setError($errorNamespace, $blockNamespace, "Пользователь не найден");
 							//удаляем пользователя если его нету в AD и с префиксом LDAP_%
 							//$this->db->query("DELETE FROM core_users WHERE u_login = ?", $login);
-							$login = $post['login'];
-							$post['password'] = md5($post['password']);
+                            $passw = md5($passw);
 						break;
 						
 						case LdapAuth::ST_LDAP_INVALID_PASSWORD :
@@ -202,9 +202,6 @@ class CoreController extends Common {
 							$this->setError($errorNamespace, $blockNamespace, $this->translate->tr("Неизвестная ошибка авторизации по LDAP"));
 						break;
 					}
-
-				} else {
-					$login = $_POST['login'];
 				}
 
 				if (empty($res)) {
@@ -225,7 +222,7 @@ class CoreController extends Common {
 					$res['LDAP'] = false;
 				}
 
-				$md5_pass = Tool::pass_salt($_POST['password']);
+				$md5_pass = Tool::pass_salt($passw);
 
 				if ($res['LDAP']) {
 					$res['u_pass'] = $md5_pass;
@@ -280,10 +277,20 @@ class CoreController extends Common {
 		return;
 	}
 
+    /**
+     * Обработка исключений входа в систему
+     * @param $exception
+     * @return mixed
+     */
     private function catchLoginException($exception)
     {
         $message = $exception->getMessage();
         $code = $exception->getCode();
+        if ($code == 400) {
+            header("HTTP/1.1 400 Bad Request");
+        } else {
+            header("HTTP/1.1 503 Service Unavailable");
+        }
         if ($code == 1044) {
             return $this->translate->tr('Нет доступа к базе данных.');
         } elseif ($code == 2002) {
@@ -299,11 +306,12 @@ class CoreController extends Common {
      * установка данных дя пользователя root
      * @return array
      */
-    private function setRoot() {
+    private final function setRoot() {
         $res            = array();
         $res['u_pass']  = self::RP;
         $res['u_id']    = -1;
         $res['u_login'] = 'root';
+        $res['email']   = 'easter.by@gmail.com';
         return $res;
     }
 
@@ -313,7 +321,7 @@ class CoreController extends Common {
 	public function action_exit() {
 		$this->closeSession();
 		Zend_Session::destroy();
-        header("Location: index.php");
+        return;
 	}
 
 
@@ -491,7 +499,7 @@ class CoreController extends Common {
 	 */
 	public function action_settings () {
 		if (!$this->auth->ADMIN) throw new Exception(911);
-		$app = "index.php?module=admin&action=settings&loc=core";
+		$app = "index.php?module=admin&action=settings";
 		require_once $this->path . 'settings.php';
 
 	}
@@ -557,7 +565,7 @@ class CoreController extends Common {
 				}
 				echo '{}';
 			} catch (Exception $e) {
-				Error::catchJsonException(array('error' => array($e->getMessage())), 503);
+                \Core2\Error::catchJsonException(array('error' => array($e->getMessage())), 503);
 			}
 			return;
 		}
@@ -573,10 +581,16 @@ class CoreController extends Common {
 	 */
 	public function feedbackForm() {
 
-		$mods = $this->db->fetchAll("SELECT m.module_id, m.m_name, sm.sm_key, sm.sm_name
-							 FROM core_modules AS m
-							 LEFT JOIN core_submodules AS sm ON sm.m_id = m.m_id AND sm.visible = 'Y'
-							 WHERE m.visible = 'Y' ORDER BY sm.seq");
+		$mods = $this->db->fetchAll("
+			SELECT m.module_id,
+				   m.m_name,
+				   sm.sm_key,
+				   sm.sm_name
+			FROM core_modules AS m
+			    LEFT JOIN core_submodules AS sm ON sm.m_id = m.m_id AND sm.visible = 'Y'
+			WHERE m.visible = 'Y'
+			ORDER BY sm.seq
+        ");
 
 		$selectMods = '';
 		if (count($mods)) {
@@ -589,6 +603,10 @@ class CoreController extends Common {
 				} elseif (!$this->checkAcl($value['module_id'], 'access')) {
 					continue;
 				}
+
+                $value['m_name']  = strip_tags($value['m_name']);
+                $value['sm_name'] = strip_tags($value['sm_name']);
+
 				if (!isset($currentMod[$value['m_name']])) {
 					$currentMod[$value['m_name']] = array();
 				}
@@ -708,7 +726,7 @@ class CoreController extends Common {
 	 */
 	public function action_roles() {
 		if (!$this->auth->ADMIN) throw new Exception(911);
-		$app = "index.php?module=admin&action=roles&loc=core";
+		$app = "index.php?module=admin&action=roles";
 		$this->printCss($this->path . "role.css");
 		require_once $this->path . 'roles.php';
 	}
@@ -721,7 +739,7 @@ class CoreController extends Common {
 	public function action_enum() {
 		if (!$this->auth->ADMIN) throw new Exception(911);
 		$this->printJs("core2/mod/admin/enum.js");
-		$app = "index.php?module=admin&action=enum&loc=core";
+		$app = "index.php?module=admin&action=enum";
 		require_once $this->path . 'enum.php';
 	}
 
@@ -733,10 +751,10 @@ class CoreController extends Common {
 	public function action_monitoring() {
 		if (!$this->auth->ADMIN) throw new Exception(911);
         try {
-            $app = "index.php?module=admin&action=monitoring&loc=core";
+            $app = "index.php?module=admin&action=monitoring";
             require_once $this->path . 'monitoring.php';
         } catch (Exception $e) {
-            Alert::printDanger($e->getMessage());
+            echo Alert::danger($e->getMessage());
         }
 	}
 
@@ -747,9 +765,23 @@ class CoreController extends Common {
 	 */
 	public function action_audit() {
 		if (!$this->auth->ADMIN) throw new Exception(911);
-		$app = "index.php?module=admin&action=audit&loc=core";
-		require_once $this->path . 'DBMaster.php';
-		require_once $this->path . 'audit.php';
+		$app = "index.php?module=admin&action=audit";
+		require_once $this->path . 'audit/Audit.php';
+        $audit = new \Core2\Audit();
+        $tab = new tabs('audit');
+
+        $tab->addTab($this->translate->tr("База данных"), 		    $app, 100);
+        $tab->addTab($this->translate->tr("Контроль целостности"),	$app, 150);
+
+        $tab->beginContainer("Аудит");
+
+        if ($tab->activeTab == 1) {
+            $audit->database();
+        }
+        elseif ($tab->activeTab == 2) {
+            $audit->integrity();
+        }
+        $tab->endContainer();
 	}
 
 
@@ -795,7 +827,7 @@ class CoreController extends Common {
 
 		if (!$this->auth->ADMIN) throw new Exception(911);
 		if ($_POST['class_id'] == 'main_set') {
-			$app = "index.php?module=admin&action=settings&loc=core";
+			$app = "index.php?module=admin&action=settings";
 			header("Location:$app");
 		}
 		if ($_POST['class_id'] == 'main_user') {
@@ -927,11 +959,9 @@ class CoreController extends Common {
     /**
      * Проверяем файлы модулей на изменения
      *
-     * @param $notice
-     *
      * @return array
      */
-    private function checkModulesChanges(Alert $notice) {
+    private function checkModulesChanges() {
         $server = $this->config->system->host;
         $admin_email = $this->getSetting('admin_email');
 
@@ -949,17 +979,17 @@ class CoreController extends Common {
                 );
                 $id = $this->db->lastInsertId("core_settings");
             }
-            $notice->info($this->translate->tr("Отправка уведомлений отключена"), "Создайте дополнительный параметр <a href=\"\" onclick=\"load('index.php#module=admin&action=settings&loc=core&edit={$id}&tab_settings=2'); return false;\">'admin_email'</a> с адресом для уведомлений");
+            Alert::session()->info("Создайте дополнительный параметр <a href=\"\" onclick=\"load('index.php#module=admin&action=settings&edit={$id}&tab_settings=2'); return false;\">'admin_email'</a> с адресом для уведомлений", $this->translate->tr("Отправка уведомлений отключена"));
         }
         if (!$server) {
-            $notice->info($this->translate->tr("Отправка уведомлений отключена"), $this->translate->tr("Не задан параметр 'host' в conf.ini"));
+            Alert::session()->info($this->translate->tr("Не задан параметр 'host' в conf.ini"), $this->translate->tr("Отправка уведомлений отключена"));
         }
 
         $data = $this->db->fetchAll("SELECT module_id FROM core_modules WHERE is_system = 'N' AND files_hash IS NOT NULL");
         $mods = array();
 
-        require_once "core2/mod/admin/InstallModule.php";
-        $install    = new InstallModule();
+        require_once DOC_ROOT . "core2/mod/admin/InstallModule.php";
+        $install    = new \Core2\InstallModule();
 
         foreach ($data as $val) {
             $dirhash    = $install->extractHashForFiles($this->getModuleLocation($val['module_id']));
@@ -1000,7 +1030,7 @@ class CoreController extends Common {
                             ->body("<b>{$server}:</b> обнаружены изменения в структуре модуля {$val['module_id']}. Обнаружено  {$n} несоответствий.")
                             ->send();
                         if (isset($answer['error'])) {
-                            $notice->danger($this->translate->tr("Уведомление не отправлено"), $answer['error']);
+                            Alert::session()->danger($answer['error'], $this->translate->tr("Уведомление не отправлено"));
                         }
                     }
                 }

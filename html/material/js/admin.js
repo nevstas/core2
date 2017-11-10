@@ -18,7 +18,7 @@ var main_menu = {
         $('.menu-module, .menu-module-selected').each(function(){
             var module = $(this).attr('id').substr(7);
             if ($('li[id^=submodule-' + module + '-]')[0]) {
-                $('a', this).append('<span class="nav-second-level-toggle fa fa-angle-right pull-right"></span>');
+                $('a', this).append('<span class="nav-second-level-toggle fa fa-angle-right"></span>');
             }
         });
     }
@@ -92,17 +92,14 @@ function goHome() {
 }
 
 function logout() {
-    if (alertify) {
-        alertify.confirm('Вы уверены, что хотите выйти?', function (e) {
-            if (e) {
-                window.location='index.php?module=admin&action=exit';
-            }
+    alertify.confirm('Вы уверены, что хотите выйти?', function (e) {
+        $.ajax({url:'index.php?module=admin&action=exit'})
+            .done(function (n) {
+                window.location='index.php';
+            }).fail(function (a,b,t){
+            alert("Произошла ошибка: " + a.statusText);
         });
-    } else {
-        if (confirm('Вы уверены, что хотите выйти?')) {
-            window.location='index.php?module=admin&action=exit';
-        }
-    }
+	});
 }
 
 function jsToHead(src) {
@@ -482,7 +479,7 @@ $(document).ready(function() {
             submodulesContainer.show();
             var offsets = this.getBoundingClientRect();
 
-            if ($(this)[0].offsetTop > 200) {
+            if (($(window).height() - $(this)[0].offsetTop) < submodulesContainer.height()) {
                 submodulesContainer.css('top', (offsets.top - submodulesContainer.height() + 27) + 'px');
             } else {
                 submodulesContainer.css('top', (offsets.top + 1) + 'px');

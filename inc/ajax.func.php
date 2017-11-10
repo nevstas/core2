@@ -16,11 +16,11 @@ class ajaxFunc extends Common {
 	protected $response;
 	protected $script;
 	protected $userId;
-	private $image;
 	private $orderFields;
 
     /**
-     * Do things
+     * ajaxFunc constructor.
+     * @param xajaxResponse $res
      */
     public function __construct (xajaxResponse $res) {
 	    $this->response = $res;
@@ -41,7 +41,7 @@ class ajaxFunc extends Common {
 		$order_fields = $this->getSessForm($class_id);
 
 		$control  = $data['control']; //данные полей формы
-		$script   = "for (var i = 0; i < document.getElementById('{$class_id}_mainform').elements.length; i++) {if(document.getElementById('{$class_id}_mainform').elements[i].className=='reqField')document.getElementById('{$class_id}_mainform').elements[i].className='input'};";
+		$script   = "for(var i = 0; i < document.getElementById('{$class_id}_mainform').elements.length; i++){document.getElementById('{$class_id}_mainform').elements[i].classList.remove('reqField')};";
 		$req      = array();
 		$email    = array();
 		$date     = array();
@@ -107,7 +107,7 @@ class ajaxFunc extends Common {
 		}
 		if (count($req)) {
 			foreach ($req as $val) {
-				$script .= "document.getElementById('" . $class_id . $val . "').className='reqField';";
+				$script .= "document.getElementById('" . $class_id . $val . "').classList.add('reqField');";
 			}
 			$this->error[] = "- {$this->translate->tr('Пожалуйста, заполните обязательные поля.')}<br/>";
 		}
@@ -121,7 +121,7 @@ class ajaxFunc extends Common {
 				    foreach ($validator->getMessages() as $message) {
 				        $this->error[] = "- $message";
 				    }
-				    $script .= "document.getElementById('" . $class_id . $field . "').className='reqField';";
+				    $script .= "document.getElementById('" . $class_id . $field . "').classList.add('reqField');";
 				}
 			}
 		}
@@ -134,7 +134,7 @@ class ajaxFunc extends Common {
 				    foreach ($validator->getMessages() as $message) {
 				        $this->error[] = "- $message";
 				    }
-				    $script .= "document.getElementById('" . $class_id . $field . "').className='reqField';";
+				    $script .= "document.getElementById('" . $class_id . $field . "').classList.add('reqField');";
 				}
 			}
 		}
@@ -175,7 +175,7 @@ class ajaxFunc extends Common {
 				    foreach ($validator->getMessages() as $message) {
 				        $this->error[] = "- $message";
 				    }
-				    $script .= "document.getElementById('" . $class_id . $field . "').className='reqField';";
+				    $script .= "document.getElementById('" . $class_id . $field . "').classList.add('reqField');";
 				}
 			}
 		}
@@ -231,7 +231,6 @@ class ajaxFunc extends Common {
     	$this->response->assign($class_id . "_error", "innerHTML", '<a name="' . $class_id . '_error"> </a>' . implode("<br/>", $this->error));
 		$this->response->assign($class_id . "_error", "style.display", 'block');
 		$this->response->script("toAnchor('{$class_id}_error')");
-		$this->response->script("top.preloader.progressbarStop();");
     }
 
 	/**
@@ -377,7 +376,8 @@ class ajaxFunc extends Common {
     }
 
 	/**
-	 * Save data
+	 * Сохранение данных формы
+     *
 	 * @param array     $data
 	 * @param bool|true $inTrans
 	 * @return int|string
@@ -468,19 +468,20 @@ class ajaxFunc extends Common {
 				// CHECK IF THE RECORD WAS CHANGED
 				$this->checkTheSame($table, $data);
 
+                $last_insert_id = $order_fields['refid'];
 				//Проверка доступа
 				if ($this->checkAcl($order_fields['resId'], 'edit_owner') && !$this->checkAcl($order_fields['resId'], 'edit_all')) {
-					$res = $this->db->fetchRow("SELECT * FROM `$table` WHERE `{$order_fields['keyField']}`=? LIMIT 1", $order_fields['refid']);
+					$res = $this->db->fetchRow("SELECT * FROM `$table` WHERE `{$order_fields['keyField']}`=? LIMIT 1", $last_insert_id);
 					if (isset($res['author']) && $authNamespace->NAME != $res['author']) {
 						throw new Exception($this->translate->tr('Вам разрешено редактировать только собственные данные.'));
 					}
 				}
 
                 if ( ! empty($control)) {
-				$where = $this->db->quoteInto($order_fields['keyField'] . " = ?", $order_fields['refid']);
-				$this->db->update($table, $control, $where);
+                    $where = $this->db->quoteInto($order_fields['keyField'] . " = ?", $last_insert_id);
+                    $this->db->update($table, $control, $where);
                 }
-				$last_insert_id = $order_fields['refid'];
+
 				if ($fileFlag) {
 					if ($fileFlagDel) {
 						foreach ($fileFlagDel as $value) {
@@ -556,7 +557,7 @@ class ajaxFunc extends Common {
 	
        
     /**
-     * basic save function
+     * Сохранение данных формы
      *
      * @param array $data
      * @param string $fields
